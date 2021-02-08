@@ -1,0 +1,376 @@
+---
+title: "Twitter Advertising Campaign"
+output:
+  html_document:
+    rmarkdown::github_document
+  pdf_document: 
+    citation_package: natbib
+    keep_tex: true
+    fig_caption: true
+    latex_engine: pdflatex
+    #template: ~/Dropbox/miscelanea/svm-r-markdown-templates/svm-latex-ms.tex
+author: Tolu Omotunde
+abstract: "This document explores an A/B test experiment to reduce the amount of overspend on advert placements. The advertisers were randomly split on the platform and half of the advertisers remained on the old product and half received the new product. In the old product, Twitter only charged advertisers for actual clicks on their ads, the charges can enter into the system after some (random) delay. In the new product, the advertisers pay each time their ad appears in a user’s viewport rather than each time it is clicked on -- presumably these engagements would be received at a lower latency.                                                                                                                           "
+date: "Last compiled on `r format(Sys.time(), '%d %B, %Y')`"
+geometry: margin=1in
+fontfamily: mathpazo
+fontsize: 11pt
+highlighter : highlight.js
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, results='hide', message=FALSE, warning=FALSE, echo=FALSE}
+#### Import Libraries
+library(tidyverse);
+library(readxl);
+library(plyr);
+library(dplyr);
+library(ggplot2);
+library(gridExtra);
+library(plotly);
+library(tidyverse) # handy utility functions
+library(outliers) # library for identifying outliers
+library(reshape2)
+library(moments)
+library(bestNormalize)
+library(cowplot)
+library(ggpubr)
+```
+&nbsp;
+&nbsp;
+&nbsp;
+
+##### Import and explore dataset
+
+```{r, echo=FALSE}
+theme_set(theme_minimal())
+# displaying all columns of tibble
+options(tibble.width = Inf)
+
+df_path <- "analytical_take_home_data_v2.xlsx"
+advert_df <- read_excel(df_path);
+# Convert company size and treatment to factor variables
+advert_df$company_size <- factor(
+    advert_df$company_size, 
+    levels = c("small", "medium", "large")
+);
+advert_df$treatment <- as.factor(advert_df$treatment);
+# Ensure data was imported correctly
+str(advert_df);
+```
+&nbsp;
+&nbsp;
+&nbsp;
+
+#### Count number of missing values across the columns
+```{r, echo=FALSE}
+sapply(advert_df, function(x) sum(is.na(x)))
+```
+&nbsp;
+&nbsp;
+&nbsp;
+
+#### Display percentage of adverts by company size and treatment
+```{r, echo=FALSE}
+## Set options to round figures and reset to scientific notation
+options(scipen=999)
+count_df <- table(advert_df[,c('treatment', 'company_size')])
+round((count_df/nrow(advert_df))*100,3)
+options(scipen=0)
+```
+There is a noticeable disparity between the percentage of companies in the small, medium and large size groupings. This might introduce a bias so it is worth taking into account in downstream analysis
+&nbsp;
+&nbsp;
+&nbsp;
+
+The next step is to visualize distribution of the campaign budget and spending by company size and treatment to further understand the data. A log transformation was taken due to the presence of heavy skewness.
+
+```{r, echo=FALSE}
+##### Boxplot of campaign budget and spending by company size and treatment type
+labels <- c(
+    campaign_spend = "Campaign Spend", 
+    campaign_budget = "Campaign Budget"
+    )
+
+select_var <- c("treatment", "company_size", "campaign_spend", "campaign_budget")
+p <- melt(
+    advert_df[,select_var], 
+    id.vars=c("treatment", "company_size")) %>% 
+    ggplot(aes(x=company_size, y=value)) +
+        geom_boxplot(aes(fill=treatment)) +
+        yscale("log10", .format = TRUE) +
+        labs(x="Company Size", y="log10(Amount in $)", fill="Treatment") +
+        theme(
+                plot.title = element_text(hjust = 0.5),
+                strip.text.x = element_text(size = 9, color = "black", face = "bold.italic"),
+                strip.text.y = element_text(size = 9, color = "black", face = "bold.italic"),
+                strip.background = element_rect(
+                    color="black", 
+                    fill="lightblue", 
+                    size=1, 
+                    linetype="solid"
+                )
+            ) +
+        facet_wrap(variable~., scales="fixed", labeller=labeller(variable = labels))
+
+p
+```
+
+
+By eye-balling, the treatment group appears to have a slightly lower median budget and spending for the small and large sized companies as compared to the control group. The medium sized companies have roughly the same median budget and spending in both the treatment and control. 
+The Inter-Quartile Range (IQR) of the medium and large sized companies is larger in the treatment group compared to the control group. In the small sized companies, the IQR is smaller in the treatment group compared to the control group. 
+&nbsp;
+&nbsp;
+&nbsp;
+
+#### Add Percentage change column
+```{r}
+advert_df <- mutate(
+    advert_df, percent_overspend = (
+        (campaign_spend-campaign_budget)/campaign_budget
+        )*100)
+```
+&nbsp;
+&nbsp;
+&nbsp;
+
+#### Visualize the campaign experiment using scatter plots in multiple dimensions
+```{r, message=FALSE, warning=FALSE, , echo=FALSE}
+# Get the z-scores for each value in refunt_value
+outlier_scores <- scores(advert_df$campaign_budget)
+
+# add a column with info whether the refund_value is an outlier
+advert_df$is_outlier <- ifelse(outlier_scores > 3 | outlier_scores < -3, "Budget Outliers","Budget Non-Outliers")
+
+p1 <- ggplot(data = advert_df, aes(x=campaign_budget, y=campaign_spend)) +
+          geom_point(
+              aes(color=treatment, shape=company_size, size=percent_overspend), 
+              alpha = 1/4
+          ) +
+          geom_smooth(se = FALSE)  + 
+          labs(
+              x="Campaign Spend ($)", 
+              y="Campaign Budget ($)", 
+              shape="Company Size", 
+              size="% Overspend", 
+              color="Treatment"
+          ) + 
+          theme(
+              plot.title = element_text(hjust = 0.5),
+              strip.text.x = element_text(size = 9, color = "black", face = "bold.italic"),
+              strip.text.y = element_text(size = 9, color = "black", face = "bold.italic"),
+              strip.background = element_rect(
+                  fill="lightblue", 
+                  size=1, 
+                  color="darkblue", 
+                  linetype="solid"
+              )
+          ) + 
+          facet_wrap(~is_outlier, scales="free") 
+
+p1
+
+```
+
+
+The outliers are campaigns with budgets above and below 3 standard deviations across the entire distribution. 
+
+Most of the campaigns with outlier budgets seems to be associated with the treatment group, lower overspend and large companies.
+
+For the campaigns with non-outlier budgets, there seems to be higher overspend in the treatment group and more of the campaigns with higher budgets stems from small and large companies. 
+
+These observations can be as a result of the larger sample size in both small and large sized companies as compared to medium sized companies so a more statistical based analysis needs to be carried out to confirm these hypothesis.
+&nbsp;
+&nbsp;
+&nbsp;
+
+> Assumption 1: Are the two treatments independent?
+
+The treatment and control groups are also assumed to be statistically independent so it can be treated as unpaired.
+&nbsp;
+&nbsp;
+&nbsp;
+
+> Assumption 2: Are the company size and treatment attributes significant to percentage overspend?
+
+Two-way Analysis of variance of Percentage Overspend by Company Size and Treatment is performed
+```{r, , echo=FALSE}
+#### Two-way Analysis of variance in Percentage Overspend by Company Size and Treatment
+aov_calc <- aov(
+    advert_df$percent_overspend~factor(advert_df$treatment) * factor(advert_df$company_size)
+) 
+summary(aov_calc)
+```
+The summary shows that company size and treatment attributes are very significant to percentage overspend (Three stars denoting it). This is as a result of the P-value of both attributes being less than 0.05, so it proves that they are related to each other.
+&nbsp;
+&nbsp;
+&nbsp;
+
+> Assumption 3: Does the data from each of the 2 treatment follow a normal distribution?
+
+Shapiro-Wilk normality test is used to estimate normality with: 
+- Null hypothesis: the data are normally distributed        - Alternative hypothesis: the data are not normally distributed
+Shapiro-Wilk requires sample size to be within 3 - 5000 so sample 5000 values.
+&nbsp;
+&nbsp;
+&nbsp;
+
+Shapiro-Wilk normality test for Control group percentage spend
+```{r, echo=FALSE}
+with(advert_df, shapiro.test(sample(percent_overspend[treatment == FALSE], size=5000)))
+```
+
+Shapiro-Wilk normality test for Treatment group percentage spend
+```{r, echo=FALSE}
+with(advert_df, shapiro.test(sample(percent_overspend[treatment == TRUE], size=5000)))
+```
+The P-Values of the Shapiro Wilk Test in both treatment groups is smaller than 0.05 so a normal distribution is not assumed.
+
+
+#### Transformation of the overspend variable to make it more normal
+Four transformations: Logarithm, Inversion, Cuberoot and Lambert WxF Transformation are carried out on the data to reduce skewness and improve normality.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+## Log transformation generates NaN due to presence of negatives, the smallest number is -57.48581 so 58 is added to make all values positive
+advert_df$percent_overspend_log <- log10(advert_df$percent_overspend+58)
+
+## Inverse transformation
+advert_df$percent_overspend_inv <- 1/(advert_df$percent_overspend)
+
+## Cuberoot transformation
+advert_df$percent_overspend_cubrt <- (advert_df$percent_overspend)^1/3
+
+## Standardized Lambert WxF Transformation of type s with 15474 nonmissing obs
+lambert_obj <- lambert(advert_df$percent_overspend)
+# x2 <- predict(lambert_obj, newdata = predict(lambert_obj), inverse = TRUE)  # Reverse transform
+# all.equal(x2, advert_df$percent_change)
+advert_df$percent_overspend_lambert <- predict(lambert_obj)
+
+
+labels <- c(
+    percent_overspend_log = "Log10 Transform", 
+    percent_overspend_inv = "Inverse Transform",
+    percent_overspend_cubrt = "Cuberoot Transform", 
+    percent_overspend_lambert = "Lambert Transform"
+)
+
+select_var2 <- c(
+    "treatment", 
+    "percent_overspend_log", 
+    "percent_overspend_inv", 
+    "percent_overspend_lambert", 
+    "percent_overspend_cubrt"
+)
+p2 <- melt(
+    advert_df[,select_var2], 
+    id.vars="treatment"
+) %>% ggplot(aes(x=value)) +
+    geom_histogram(
+        color=I('black'), 
+        fill=I('dark green')) + 
+        labs(
+            x="% Overspend Transformed", 
+            y="Density", 
+            title="Transformed Overspend Percentage"
+        ) + theme(
+                plot.title = element_text(hjust = 0.5),
+                strip.text.x = element_text(size = 9, color = "black", face = "bold.italic"),
+                strip.text.y = element_text(size = 9, color = "black", face = "bold.italic"),
+                strip.background = element_rect(fill="lightgreen", size=1, color="darkblue", linetype="solid")
+        ) + facet_wrap(~variable, scales="free", labeller=labeller(variable = labels))
+
+p2
+```
+
+
+#### Confirm skewness of the transformed variables
+```{r, echo=FALSE}
+sapply(advert_df[,c('campaign_spend', 'campaign_budget', 'percent_overspend_log', 'percent_overspend_inv', 'percent_overspend_lambert', 'percent_overspend_cubrt')], skewness, na.rm = TRUE);
+```
+The log transformed percentage overspend variable has the lowest skewness of the 4 transformations (i.e -0.3407568) so it will be used for the rest of the analysis.
+&nbsp;
+&nbsp;
+&nbsp;
+
+> Assumption 4: Do the two treatments have the same variances?
+
+Used F-test to test for homogeneity in variances. This can be performed with the function var.test()
+
+```{r, echo=FALSE}
+res.ftest <- var.test(percent_overspend_log ~ treatment, data = advert_df)
+res.ftest
+```
+Violin and Box plots of the percentage overspent by company size and treatment suggests that considering unequal variances would be wise.The p-value of F-test is p = 6.595e-06. It’s lesser than the significance level alpha = 0.05. In conclusion, there is a significant difference between the variances of the two treatment. Therefore, we can use the unequal variance t-test.
+
+#### Visualize distribution of the data using box plots and violin plots
+```{r, echo=FALSE}
+p3 <- ggplot(advert_df, aes(x=company_size, y=percent_overspend)) + 
+      geom_boxplot(aes(fill=treatment)) + 
+      labs(y="% Overspend", x="Company Size", fill="Treatment") + 
+      theme(plot.title = element_text(hjust = 0.5)) + 
+      guides(fill = FALSE)
+
+
+p4 <- ggplot(data = advert_df, aes(y = percent_overspend, x = company_size, fill = treatment)) + 
+          geom_violin(colour = "black", size = 2)  + 
+          labs(x="Company Size", y="", fill="Treatment") 
+
+plot_grid(p3, p4, labels=c("Box Plot", "Violin Plot"), ncol = 2, nrow = 1)
+```
+&nbsp;
+&nbsp;
+&nbsp;
+
+> Get campaigns with overspend greater than 1% of their budget in the control and treatment groups
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+advert_df[advert_df$percent_overspend > 1,] %>% dplyr::group_by(treatment) %>%
+    summarise(overspend_count_greater_than_one = length(percent_overspend))
+```
+
+There are 5716 campaigns with overspend greater than 1% in control group and 5180 in treatment group
+&nbsp;
+&nbsp;
+&nbsp;
+
+>  Was the new product effective at reducing overspend?
+
+The t distribution is used for comparing the result of the two experiments. It technically assumes normality, but is robust to this assumption within limits.The t distribution gives rise to t confidence intervals. Since the data is skewed, the spirit of the t interval assumptions are violated hence, the need for a log transformation.
+
+```{r, echo=FALSE}
+t.test(percent_overspend_log ~ I(relevel(treatment, 1)), paired = FALSE, var.equal = FALSE, data = advert_df)
+```
+Since the interval is entirely above zero with a p-value below 0.05, it suggests that control group had more overspend than the treatment group (at 95% confidence). Therefore on aggregate, the new product was effective at reducing overspend.
+
+
+#### Was the new product effective at reducing overspend depending on the company size?
+```{r, echo=FALSE}
+advert_df %>% group_by(company_size) %>% do(broom::tidy(t.test(percent_overspend_log~treatment, paired=FALSE, var.equal=FALSE, data=.)))
+```
+Treatment group ensures lower overspend than the control group for large and small companies and the treatment group gives relatively the same overspend for medium sized companies. 
+
+Therefore we can't conclude that the treatment group is more effective in controlling overspend in all scenarios.
+&nbsp;
+&nbsp;
+&nbsp;
+
+> Are certain advertisers in the treatment group entering lower budgets because they are wary of the new product?
+
+```{r, echo=FALSE}
+t.test(log10(campaign_budget) ~ I(relevel(treatment, 1)), paired = FALSE, var.equal = FALSE, alternative = "greater", data = advert_df)
+```
+
+The 95% confidence interval in test to show whether the mean treatment group's budget is less than the control group's budget, the interval is entirely above zero with a p-value below 0.05 suggesting that the treatment group has comparatively lower budgets than the control group and  differences in budgets are likely not due to random fluctuations.
+
+#### Further analysis is hereby done to compare the campaign budgets according to company size in both treatment and control group.
+```{r, echo=FALSE}
+advert_df %>% group_by(company_size) %>% do(broom::tidy(t.test(log10(campaign_budget)~treatment, paired=FALSE, var.equal=FALSE, alternative = "greater", data=.)))
+```
+
+Campaign budgets in treatment group is lower in small companies due to a p-value lower than the significance level and an interval above 0. The budget in the medium and large companies is relatively the same in both the treatment and control. 
+
+Therefore we can't conclude that the treatment group has a lower campaign budget in all scenarios.

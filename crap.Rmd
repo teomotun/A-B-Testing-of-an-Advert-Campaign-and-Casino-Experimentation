@@ -1,0 +1,280 @@
+---
+title: "Simulation of the Casino Game of Craps"
+output:
+  pdf_document: 
+    citation_package: natbib
+    keep_tex: true
+    fig_caption: true
+    latex_engine: pdflatex
+    #template: ~/Dropbox/miscelanea/svm-r-markdown-templates/svm-latex-ms.tex
+  html_document:
+    df_print: paged
+author: Tolu Omotunde
+abstract: "The casino game of craps is played as follows:       1.The player rolls a pair of standard 6-sided dice and takes their sum     a. If the sum is 7 or 11, then the player wins and the game is over     b. If the sum is 2, 3, or 12, then the player loses (this is called 'crapping out') and the game is over     c. If the sum is anything else, then we record the sum (lets call it 'X') and continue to the next step     2. The player then rerolls the dice and takes their sum     a. If the sum is X, the player wins and the game is over     b. If the sum is 7, the player loses and the game is over     c. If the sum is anything else, repeat step 2.     Now suppose that you notice something odd - one of the two dice isn’t balanced that well, and always comes up in the range 2-5 (with equal probability) but never 1 or 6. "
+
+date: "Last compiled on `r format(Sys.time(), '%d %B, %Y')`"
+geometry: margin=1in
+fontfamily: mathpazo
+fontsize: 11pt
+highlighter : highlight.js
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(plyr);
+library(dplyr);
+library(ggplot2);
+library(tidyverse);
+library(roxygen2);
+options(tibble.height = Inf)
+```
+
+
+```{r helper, include=FALSE}
+## Two helper functions
+gen_bootstrap_matrix <- function(num,N,rename_columns=F,method,outcome) {
+    #' Create a matrix of row length 'num' with each unique probabilities list
+    #' 
+    #' This is a generic function which creates a bootstrap matrix 'resample_matrix'
+    #'
+    #' @param num Integer - The amount of simulations to make
+    #'
+    #' @param N Integer - The amount of rollsums to take
+    #'
+    #' @param rename_columns Logical- Change column names to roll sums i.e 2-12
+    #'
+    #' @param method String - String - 'prob' or 'game' Specify whether to get roll sums
+    #' or crap game probability 
+    #'
+    #' @param outcome Vector of experiment outcomes
+    #'
+    #' @return resample_matrix - Matrix of probabilities with right colnames
+    
+    ## Create list with 'num' elements of dice roll sums probabilities 
+    if (method=="prob") {
+        resamples <- lapply(1:num, function(i) get_dice_probs(N,outcome))
+    } 
+    if (method=="game") {
+        resamples <- lapply(1:num, function(i) unlist(get_craps_probs(N,outcome)))
+    }
+    resample_matrix <- do.call(rbind,resamples)
+    
+    ## Changing column names
+    if (rename_columns) {
+        colnames(resample_matrix) <- paste(2:12,"",sep="")
+    }
+    resample_matrix
+}
+
+
+gen_bootstrap_summary <- function(matrix,vec_list,method) {
+    #' Calculate summary statistics i.e mean and standard error
+    #' 
+    #' This is a generic function which creates a list with summary statistics
+    #' and a dataframe as its outputs
+    #'
+    #' @param matrix Matrix - Bootstrapped matrix of probabilities 
+    #'
+    #' @param vec_list Vector - Vector of outcomes
+    #'
+    #' @param method String - 'prob' or 'game' Specify whether to get roll sums
+    #' or crap game probability 
+    #'
+    #' @return List - Elements of list are Bootstrapped matrix of probabilities,
+    #' vector of probabilities, vector of standard errors of probabilities and
+    #' a 3 column dataframe of results
+    
+    output.mean <- apply(matrix, 2, mean)
+    output.stderr <- apply(matrix, 2, sd)/sqrt(nrow(matrix))
+    
+    ## Create a dataframe and return the matrix, mean, std err and dataframe.
+    Probability <- output.mean
+    Standard_Error <- output.stderr
+    
+    if (method=="prob") {
+        Sum <- vec_list
+        output.df <- data.frame(Sum, Probability, Standard_Error)
+    } 
+    if (method=="game") {
+        Outcome <- vec_list
+        output.df <- data.frame(Outcome, Probability, Standard_Error)
+    }
+    
+    ## Remove rownames
+    rownames(output.df) <- c()
+    list(
+        resample_matrix=matrix,
+        output.prob=output.mean, 
+        output.stderr=output.stderr,
+        output.df=output.df
+        )   
+}
+```
+&nbsp;&nbsp;&nbsp;
+
+> 1. For each number between 2 and 12, what is the probability of rolling the dice so that they sum to that number? 
+
+```{r}
+get_dice_probs <- function(N, outcome) {
+    #' Computes probabilty for the roll sum being number 2 to 12
+    #' 
+    #' This is a generic function which computes probabilty of 2 dices roll sum
+    #'
+    #' @param N - Integer, The amount of rollsums to simulate
+    #'
+    #' @param outcome Vector of experiment outcomes
+    #'
+    #' @return prob - Vector of probabilities for each sum 2:12
+    
+    ## Allocates memory space for vector of dice roll sums outcomes
+    rolls <- NULL
+    probs <- c()
+    
+    for (i in 1:N) {
+        ## Sum of rolls on each dice
+        rollSum <- sample(1:6,1) + sample(2:5,1)
+        
+        ## Append roll sums to the list of rolls
+        rolls[i] <- rollSum
+    }
+    for (i in 2:12) {
+        ## Calculate probabilty for the roll sum being number 2 to 12
+        probs[i-1] <-  sum(rolls==i)/N
+    }
+    probs
+}
+
+
+## Outcome vector
+outcome <- 2:12
+
+## Number of rolls to simulate
+N <- 10000
+
+## Use 100 bootstrap experiments
+no_bootstrap <- 100
+
+## Calculate the dice roll sum probabilities using the two helper functions:
+## gen_bootstrap_matrix and gen_bootstrap_summary created earlier
+bootstrap_matrix <- gen_bootstrap_matrix(
+    num=no_bootstrap,
+    N=N,
+    rename_columns=T,
+    method="prob",
+    outcome=outcome
+)
+dice_data <- gen_bootstrap_summary(
+    matrix=bootstrap_matrix,
+    vec_list=outcome,
+    method="prob")
+head(dice_data$output.df,11)
+```
+&nbsp;&nbsp;&nbsp;
+
+> 2. a. What’s the probability of winning on the very first roll?
+     b. What’s the probability of losing (“crapping out”) on the very first roll?
+ 
+```{r}
+get_craps_probs <- function(N,outcome) {
+    #' Computes probabilty for the craps game different outcomes
+    #'
+    #' @param N - Integer, The amount of rollsums to take
+    #'
+    #' @param outcome Vector of experiment outcomes
+    #'
+    #' @return prob - Vector of probabilities for each game outcome
+    
+    ## Allocates memory space for vector of game outcomes
+    game <- NULL
+    game_probability <- list()
+    
+    for (i in 1:N) {
+        ## Sum of rolls on each dice
+        rollSum <- sample(1:6,1) + sample(2:5,1)
+        
+        ## First condition is the player craps out on the first roll
+        ## Second condition is if the player wins on the first roll
+        ## Third condition is if the game continues into the point phase
+        if (rollSum %in% c(2,3,12)) {
+              result <- outcome[1]
+        } else if (rollSum %in% c(7,11)) {
+              result <- outcome[2]
+        } else {
+              ## Sum of rolls on each dice
+              nextRollSum <- sample(1:6,1) + sample(2:5,1)
+              
+              ## Keep rolling dice till player gets a 7 or the previous point
+              while (!(nextRollSum %in% c(7,rollSum))) {
+                  nextRollSum <- sample(1:6,1) + sample(2:5,1)
+              }
+              ## If a 7 the player loses
+              ## Otherwise the player wins
+              if (nextRollSum == 7) {
+                  result <- outcome[3]
+              } else {
+                  result <- outcome[4]
+              }
+        }
+        
+        ## Append the result of the game to outcome list
+        game[i] <- result
+    }
+    for (i in outcome) {
+        ## Calculate probabilty for the roll sum being number 1 to 12
+        game_probability[i] <-  sum(game==i)/N
+    }
+    game_probability
+}
+
+## Outcome vector
+outcome <- c(
+    "Craps on First", 
+    "Wins on First", 
+    "Craps after First", 
+    "Wins after First"
+)
+
+## Use 20 bootstrap experiments
+no_bootstrap <- 20
+
+## Number of rolls to simulate
+N <- 100000
+
+## Calculate the game probabilities using the two helper functions:
+## gen_bootstrap_matrix and gen_bootstrap_summary created earlier
+bootstrap_matrix2 <- gen_bootstrap_matrix(
+    num=no_bootstrap,
+    N=N,
+    rename_columns=F,
+    method="game",
+    outcome=outcome
+)
+game_data <- gen_bootstrap_summary(
+    bootstrap_matrix2,
+    vec_list=outcome,
+    method="game"
+)
+game_data$output.df[c(1:2),]
+```
+&nbsp;&nbsp;&nbsp;
+
+> 3. Suppose that on the first roll, you do not win or lose, but rather, you get the sum X, which has roll probability p. Given that you have already made it to this point, what’s your
+chance of winning going forward?
+
+```{r}
+game_data$output.df[4,]
+```
+&nbsp;&nbsp;&nbsp;
+
+> 4. If you bet a dollar on a game of craps with these two dice, what is the expected return? ( If you win, you will get your original dollar back plus a second dollar; if you lose, then you do not get your dollar back)
+a. What is the expected return on that dollar?
+
+```{r}
+output.prob <- unname(game_data$output.prob, force = TRUE)
+prob_losing <- output.prob[1] + output.prob[3]
+prob_winning <- output.prob[2] + output.prob[4]
+expected_return <- -1*prob_losing + 1*prob_winning
+expected_return
+```
+Thus, you expect to gain  around `r round(expected_return*100,2)` cents on the dollar at this game.
+
